@@ -11,33 +11,51 @@ This document tracks completed milestones, architecture decisions, important fil
 ### Milestone 1 — Foundation and Authentication (COMPLETE)
 
 **What was built:**
-- Application foundation using Vite + React + TypeScript + Tailwind CSS.
-- Supabase client singleton reading from environment variables.
-- Email/password authentication: sign-up, login, logout (Supabase Auth).
-- Auth context provider with session state and `onAuthStateChange` listener.
-- Route protection — all app pages require an authenticated session.
-- Responsive app layout with sidebar navigation (desktop) and mobile drawer.
-- Placeholder pages for all 7 required sections: Overview, Sensor History, Pump Control, Automation, Schedules, Alerts, Settings.
-- Nature-inspired design system (green/clay/sky palette, Inter + Sora fonts, 8px spacing, cards, buttons, inputs).
-- Hash-based section routing (no extra dependencies).
-- Build and typecheck pass clean.
+- Vite + React + TypeScript + Tailwind CSS foundation.
+- Supabase client singleton.
+- Email/password sign-up, sign-in and sign-out.
+- Auth context with session state.
+- Responsive app layout with sidebar and mobile drawer.
+- Seven section pages: Overview, Sensor History, Pump Control, Automation, Schedules, Alerts, Settings.
+- Nature-inspired design system.
 
-**Files created:**
-- `src/lib/supabase.ts` — Supabase client singleton.
-- `src/lib/types.ts` — shared auth types.
-- `src/auth/AuthContext.tsx` — auth provider (signUp, signIn, signOut, session state).
-- `src/auth/RequireAuth.tsx` — route guard, redirects to auth page when not signed in.
-- `src/auth/AuthPage.tsx` — login + sign-up screen with branded split layout.
-- `src/app/navigation.ts` — navigation item definitions for 7 sections.
-- `src/app/AppLayout.tsx` — responsive shell: sidebar, top bar, mobile drawer.
-- `src/components/PagePlaceholder.tsx` — reusable placeholder section component.
-- `src/pages/sectionPages.tsx` — all 7 section placeholder pages.
-- `src/App.tsx` — root component: AuthProvider + RequireAuth + layout + routing.
-- `src/index.css` — design system (fonts, base styles, component classes).
-- `tailwind.config.js` — extended theme (nature/clay/sky colors, shadows, animations).
-- `index.html` — updated page title.
+### Milestone 2 — Database, Owner Access and Device Backend (BUILD VERIFIED, AWAITING APPROVAL)
 
-**Build status:** PASS (build + typecheck)
+**Starting state found in the import (verified):**
+- No `supabase/` folder existed in the imported source. The three migration files named in the brief were not present.
+- The Supabase database was empty: no tables, no migrations recorded, no accounts, no Edge Function secrets.
+- Milestone 2 was therefore built from the schema design in the brief rather than by reviewing existing SQL.
+
+**Migrations applied (in order):**
+1. `profiles_owner_access`: profiles table, owner check, and the sign-up trigger. The first account becomes the owner; every later account is pending until the owner approves it.
+2. `devices_and_credentials`: devices and device credentials. Only a SHA-256 hash of each device secret is stored. Register, rotate and revoke functions.
+3. `readings_states_commands`: telemetry history, latest device state (only moves forward on newer sequence numbers), command lifecycle with separate receipt and execution acknowledgements.
+4. `owner_check_runs_as_caller`: owner check changed to run with the caller's own permissions.
+
+**Security measures:**
+- Row level security on every table. Browsers can only read their own profile and, if owner, their own devices, readings, states and commands.
+- No browser role can write to device or command tables. Writes happen only in server functions.
+- Device credential hashes are unreadable from the browser.
+- Pending and non-owner accounts are blocked in the app and by the database.
+- Helper functions are not callable by anonymous visitors.
+- Security advisor: one intentional informational finding (credential table has no client access policy).
+
+**Edge Functions deployed (all ACTIVE):**
+- `device-telemetry` (device authentication, validated reading, history update, returns pending commands). Device-facing, no user login.
+- `device-command-ack` (device receipt and execution acknowledgements, checked against the device that owns the command).
+- `owner-devices` (owner registers, regenerates secret, revokes devices). Requires owner login.
+- `owner-commands` (owner creates pump on, pump off, or calibration sync commands with expiry). Requires owner login.
+
+**Frontend changes:**
+- Owner gate: only the owner sees the dashboard. Pending and non-owner accounts see a clear notice with sign out; errors offer retry.
+- Settings page: device registration, one-time secret display with copy, new secret, revoke.
+
+**Verification:**
+- Typecheck: PASS.
+- Build: PASS.
+- Lint: PASS (0 errors; one pre-existing warning about exports in the auth context file).
+- Security advisor: clean apart from the intentional item above.
+- Not yet verified: end-to-end test with a real owner account and a real device (requires owner sign-up and hardware).
 
 ---
 
@@ -46,46 +64,63 @@ This document tracks completed milestones, architecture decisions, important fil
 | Decision | Choice | Reason |
 |---|---|---|
 | Frontend stack | Vite + React + TypeScript + Tailwind | Provided template, zero cost |
-| Backend / database / auth | Supabase (managed) | Zero cost, integrated auth + DB + edge functions |
-| Routing | Hash-based state routing (no dependency) | Simple, sufficient for single-owner dashboard |
-| Auth method | Supabase email/password | Per requirements; email confirmation OFF |
+| Backend / database / auth | Supabase (managed) | Zero cost, integrated auth + DB + Edge Functions |
+| Owner model | First sign-up is owner; later sign-ups pending until approved | Single-owner dashboard, no public access |
+| Device secrets | Random 32-byte secret, only SHA-256 hash stored | Plaintext shown once, never recoverable from database |
+| Device telemetry | One request every 8 seconds returns both data upload and pending commands | Halves Edge Function usage versus separate polling |
+| Command lifecycle | pending, received, executed, failed, expired; receipt and execution are separate | Delivery is never treated as proof the pump operated |
+| Routing | Hash-based state routing | Simple, sufficient for single-owner dashboard |
 | Design palette | Nature greens + clay + sky (no purple) | Nature-inspired, professional |
-| Fonts | Inter (body), Sora (display), JetBrains Mono (data) | Clean, modern, readable |
+
+---
+
+## Device API (for firmware, Milestone 3)
+
+Base address: the project's Edge Functions address (`/functions/v1/...`).
+
+- Every device request sends `X-Device-Id: <device id>` and `Authorization: Bearer <device secret>`.
+- `POST /device-telemetry` with `{ sequence, raw_reading (0-1024), moisture_percent (0-100), pump_on }`. Response includes `outcome` (accepted, duplicate, stored_out_of_order) and `commands` to act on.
+- `POST /device-command-ack` with `{ command_id, stage: "receipt" }` then `{ command_id, stage: "execution", outcome: "executed" | "failed", failure_reason }`.
+
+---
+
+## Free-Tier Considerations
+
+- Edge Function calls: at an 8-second interval, one device uses roughly 324,000 calls per month. Two devices would exceed the commonly listed free allowance of 500,000 per month. Confirm current limits on the Supabase pricing page before adding a second device; a longer interval (for example 30 seconds) would be needed.
+- Database growth: each device stores one history row every 8 seconds. Retention cleanup should be planned before long-term use.
 
 ---
 
 ## Environment Variables
 
-These are already configured in `.env` (gitignored) and must NOT be shared or committed:
-
+Frontend (already configured):
 | Variable | Purpose |
 |---|---|
 | `VITE_SUPABASE_URL` | Supabase project URL (browser-safe) |
 | `VITE_SUPABASE_ANON_KEY` | Supabase anon public key (browser-safe) |
 
-Server-only secrets (not in browser code, added in later milestones):
-- `SUPABASE_SERVICE_ROLE_KEY` — used only in edge functions (device auth, telemetry).
-- `SUPABASE_DB_URL` — used for migrations via MCP tools.
+Server-only (provided automatically to Edge Functions, never in browser or firmware): `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
 
 ---
 
 ## Outstanding Issues
 
-- None for Milestone 1.
+- **Sequence reset risk:** if the device restarts and its sequence counter resets to zero, new readings will be stored as out-of-order and will not update the latest state. The firmware must persist its counter or Milestone 3 must add a boot identifier.
+- **Raw range:** the brief's air calibration value is 1024, but analog readings on the Arduino are 0 to 1023. Ranges accept 0 to 1024 to match the brief; confirm during firmware review.
+- **Owner bootstrap:** the first account to sign up becomes the owner. Sign up the owner account before sharing the app address.
+- **Account approval:** there is no approval screen yet. Pending accounts are approved by setting their approval flag to false in the database table editor.
+- **Pump and calibration controls:** the owner command endpoint exists but no pump buttons are on the Pump page yet (Milestone 3+).
+- **Device end-to-end test:** not yet done; requires the owner account and the ESP8266 firmware work in Milestone 3.
 
 ---
 
 ## Next Actions
 
-**Milestone 2 — Database and Security** (awaiting approval):
-1. Create database schema (devices, credentials, sensor readings, current state, commands, automation config, schedules, alerts, events).
-2. Enable RLS with owner-scoped policies on every table.
-3. Device registration and credential management UI.
-4. Server-side device authentication edge function.
-5. Telemetry ingestion edge function.
-6. Command polling + acknowledgement edge function.
-7. Command expiry and duplicate-execution protection.
+**Awaiting approval for Milestone 2.**
 
-**Hardware needed for Milestone 3+:**
-- Provide existing Arduino Uno and ESP8266 sketches for inspection.
-- Confirm UART protocol and pin assignments before any firmware changes.
+Manual steps for the owner:
+1. Sign up with your email and password first. Your account becomes the owner.
+2. Open Settings, register your device, and copy its secret into the ESP8266 once shown.
+3. Keep the secret private; if lost, generate a new one from Settings.
+
+Milestone 3 (after approval): review firmware sketches, connect the ESP8266 to the device endpoints, and build live readings and pump controls.

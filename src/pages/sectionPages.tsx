@@ -1,5 +1,6 @@
-import { LayoutDashboard, Wifi, Droplets, Activity, Bell, CalendarClock, Bot } from "lucide-react";
+import { LayoutDashboard, Droplets, Activity, Bell, CalendarClock, Bot } from "lucide-react";
 import { PagePlaceholder } from "@/components/PagePlaceholder";
+import { DeviceManager } from "@/components/devices/DeviceManager";
 
 export function OverviewPage() {
   return (
@@ -96,15 +97,14 @@ export function AlertsPage() {
 
 export function SettingsPage() {
   return (
-    <PagePlaceholder
-      icon={LayoutDashboard}
-      title="Settings"
-      description="Manage your device, sensor calibration, and account preferences."
-      highlights={[
-        { label: "Calibration", detail: "Set air, dry-soil, and moist-soil raw values for your HW-103 sensor." },
-        { label: "Device", detail: "Register, view status, and revoke device credentials." },
-        { label: "Account", detail: "Update email or change your password." },
-      ]}
-    />
+    <div className="space-y-6">
+      <div className="card p-6 lg:p-8">
+        <h2 className="font-display text-xl font-semibold text-neutral-900">Devices</h2>
+        <p className="mt-1 max-w-2xl text-sm text-neutral-500">
+          Register your plant monitor, generate a new secret, or revoke a device you no longer use.
+        </p>
+      </div>
+      <DeviceManager />
+    </div>
   );
 }
