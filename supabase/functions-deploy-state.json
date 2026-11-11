@@ -1,0 +1,21 @@
+{
+  "projectId": "72840559",
+  "functions": {
+    "device-command-ack": {
+      "hasChanged": false,
+      "hash": "bdfa00a136d093959274d48f68a5fab1c9a310cd4c9c208a638a7e18d7a19d13"
+    },
+    "device-telemetry": {
+      "hasChanged": false,
+      "hash": "d5359e244115ff4120b38e9b9572955d65abed9bbf0a3ebb19f2a7752e62bc9e"
+    },
+    "owner-commands": {
+      "hasChanged": false,
+      "hash": "8f1255e0c38f4d98e4ac82a817f0867e5947047c397c7af559009a5fc60744a9"
+    },
+    "owner-devices": {
+      "hasChanged": false,
+      "hash": "049a4185ac91bdfdd870507549d992de0da14026e8151fe3189afadb7a9f6828"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+[functions.device-telemetry]
+verify_jwt = false
+
+[functions.device-command-ack]
+verify_jwt = false
+
+[functions.owner-devices]
+verify_jwt = true
+
+[functions.owner-commands]
+verify_jwt = true

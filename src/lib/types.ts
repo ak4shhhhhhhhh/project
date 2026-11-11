@@ -8,3 +8,5 @@ export interface AuthFormValues {
 export interface AppError {
   message: string;
 }
+
+export type AccessStatus = "loading" | "owner" | "pending" | "denied" | "error";
