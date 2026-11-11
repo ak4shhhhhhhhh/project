@@ -19,7 +19,7 @@ This document tracks completed milestones, architecture decisions, important fil
 - Seven section pages: Overview, Sensor History, Pump Control, Automation, Schedules, Alerts, Settings.
 - Nature-inspired design system.
 
-### Milestone 2 — Database, Owner Access and Device Backend (BUILD VERIFIED, AWAITING APPROVAL)
+### Milestone 2 — Database, Owner Access and Device Backend (AUDITED, AWAITING APPROVAL)
 
 **Starting state found in the import (verified):**
 - No `supabase/` folder existed in the imported source. The three migration files named in the brief were not present.
@@ -32,13 +32,33 @@ This document tracks completed milestones, architecture decisions, important fil
 3. `readings_states_commands`: telemetry history, latest device state (only moves forward on newer sequence numbers), command lifecycle with separate receipt and execution acknowledgements.
 4. `owner_check_runs_as_caller`: owner check changed to run with the caller's own permissions.
 
-**Security measures:**
+**Security measures (as designed):**
 - Row level security on every table. Browsers can only read their own profile and, if owner, their own devices, readings, states and commands.
-- No browser role can write to device or command tables. Writes happen only in server functions.
+- No browser role has a write policy on device or command tables. Writes happen only in server functions.
 - Device credential hashes are unreadable from the browser.
 - Pending and non-owner accounts are blocked in the app and by the database.
-- Helper functions are not callable by anonymous visitors.
-- Security advisor: one intentional informational finding (credential table has no client access policy).
+
+**Audit findings (verification-only pass, no code or schema changed):**
+
+Verified by live query:
+- Four migrations recorded as applied. Tables: profiles, devices, device_credentials, readings, device_states, commands.
+- Owner row exists: one profile, `is_owner = true`, `is_pending = false`, owning 2 devices.
+- Two devices ("Plant", "plant 2") each have one active credential. Stored hashes are 64-character lowercase hex (SHA-256). No plaintext secret is in the database.
+- A signed-in non-owner user sees zero devices, credentials, profiles, commands, readings and states.
+- An anonymous visitor sees zero devices, credentials and profiles.
+- The owner, simulated as an authenticated user, sees their 2 devices and passes the owner check.
+- All four Edge Functions are ACTIVE with the intended public or signed-in access settings.
+- The three original migration files named in the brief were never present in the import. The four migrations above were written from the brief's design.
+
+Code inspection only (not yet exercised end to end):
+- Device registration returns a one-time secret; device authentication compares its hash; telemetry rejects bad fields and duplicate sequences; command creation checks owner and device ownership; acknowledgements check the authenticated device. Nothing has been called with a real secret yet.
+- Device with a real secret: not tested. The two existing devices' secrets were not available to this audit.
+- Unauthorized command creation: not tested. Code rejects non-owners, and no browser write policy exists on the commands table.
+
+Open security issues:
+1. **Over-broad table grants (medium).** The `anon` and `authenticated` roles hold INSERT, UPDATE and DELETE on every public table, not just SELECT. Row level security blocks these writes today because no write policies exist, but one future policy mistake could open them. Fix: revoke all write grants from browser roles and keep SELECT only (needs approval).
+2. **Performance warnings (low).** Four policies call `auth.uid()` per row; wrap as `(select auth.uid())`. One unindexed foreign key on `commands.requested_by`. Two indexes are unused until history queries run.
+3. **Credential table (informational).** RLS is on with no client policy, which is intended.
 
 **Edge Functions deployed (all ACTIVE):**
 - `device-telemetry` (device authentication, validated reading, history update, returns pending commands). Device-facing, no user login.
@@ -54,7 +74,7 @@ This document tracks completed milestones, architecture decisions, important fil
 - Typecheck: PASS.
 - Build: PASS.
 - Lint: PASS (0 errors; one pre-existing warning about exports in the auth context file).
-- Security advisor: clean apart from the intentional item above.
+- Security advisor: no blocking findings. Over-broad browser grants and performance warnings are listed under the audit findings.
 - Not yet verified: end-to-end test with a real owner account and a real device (requires owner sign-up and hardware).
 
 ---
@@ -108,15 +128,21 @@ Server-only (provided automatically to Edge Functions, never in browser or firmw
 - **Sequence reset risk:** if the device restarts and its sequence counter resets to zero, new readings will be stored as out-of-order and will not update the latest state. The firmware must persist its counter or Milestone 3 must add a boot identifier.
 - **Raw range:** the brief's air calibration value is 1024, but analog readings on the Arduino are 0 to 1023. Ranges accept 0 to 1024 to match the brief; confirm during firmware review.
 - **Owner bootstrap:** the first account to sign up becomes the owner. Sign up the owner account before sharing the app address.
-- **Account approval:** there is no approval screen yet. Pending accounts are approved by setting their approval flag to false in the database table editor.
+- **Account approval:** there is no approval screen yet. Pending accounts are approved by setting `profiles.is_pending` to false in the database table editor.
 - **Pump and calibration controls:** the owner command endpoint exists but no pump buttons are on the Pump page yet (Milestone 3+).
 - **Device end-to-end test:** not yet done; requires the owner account and the ESP8266 firmware work in Milestone 3.
+- **Untested behaviour:** device authentication, telemetry, command creation, acknowledgements and rejection of unauthorized commands have not been exercised with real requests.
+- **Free-tier check:** the call-count estimate above still needs confirmation against current Supabase pricing before a second device is used heavily.
+- **Edge Function secrets:** the secrets list was not re-checked in this audit.
 
 ---
 
 ## Next Actions
 
-**Awaiting approval for Milestone 2.**
+**Awaiting approval for Milestone 2.** Decisions needed:
+1. Approve trimming browser-role write grants to SELECT only (issue 1 above).
+2. Approve the performance fixes (auth call wrapping and the foreign-key index).
+3. Approve end-to-end tests with a test owner account and a test device, which write test rows to the database.
 
 Manual steps for the owner:
 1. Sign up with your email and password first. Your account becomes the owner.
